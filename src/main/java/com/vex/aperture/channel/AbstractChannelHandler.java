@@ -1,4 +1,4 @@
-package com.xinli.aperture.channel;
+package com.vex.aperture.channel;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
@@ -10,7 +10,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -18,16 +17,16 @@ import java.util.stream.Collectors;
  * Aperture 通道处理器基类;类比 Spring {@code @RestController} —— 一个 handler 实例绑定一条
  * WebSocket URL,业务方法用 {@link AprTextFrame} / {@link AprByteFrame} <b>方法级</b>注解声明路由。
  *
- * <p>不再直接 {@code implements WebSocketHandler};由 {@link com.xinli.aperture.channel.spi.AprWebSocketAdapter}
+ * <p>不再直接 {@code implements WebSocketHandler};由 {@link com.vex.aperture.channel.spi.AprWebSocketAdapter}
  * 转发 Spring 协议回调到本类的 {@link #afterEstablished}/{@link #handleFrame}/{@link #afterClosed},
- * 配合 {@link com.xinli.aperture.channel.spi.AprControllerRegistry} 做 {@code @AprController}
+ * 配合 {@link com.vex.aperture.channel.spi.AprControllerRegistry} 做 {@code @AprController}
  * 自动路由注册。
  *
  * <p>业务方法签名(任选其一):
  * <ul>
  *   <li>{@code void onXxx(Channel c, String payloadJson)} — 原始 JSON 载荷;</li>
  *   <li>{@code void onXxx(Channel c, @AprPayload SomeRecord req)} — 经 Jackson 反序列化 + Bean Validation;</li>
- *   <li>{@code void onXxx(Channel c, AudioFrame frame)} — 仅二进制帧路由;</li>
+ *   <li>{@code void onXxx(Channel c, BinaryFrame frame)} — 仅二进制帧路由;</li>
  * </ul>
  *
  * <p>启动期反射建路由表;同一 {@code @AprTextFrame("type")} / {@code @AprByteFrame(N)} 不可重复,
@@ -37,9 +36,6 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 public abstract class AbstractChannelHandler<C extends Channel> {
-
-    protected static final int FRAME_HEADER_BYTES = 16;
-    protected static final int FRAME_MAGIC = 0xA1;
 
     protected final JsonMapper jsonMapper;
     private final Validator validator;
@@ -154,8 +150,8 @@ public abstract class AbstractChannelHandler<C extends Channel> {
 
     private static void validateByteMethod(Method m) {
         Class<?>[] p = m.getParameterTypes();
-        if (p.length != 2 || !Channel.class.isAssignableFrom(p[0]) || p[1] != AudioFrame.class) {
-            throw new IllegalStateException("@AprByteFrame 方法签名必须是 (Channel, AudioFrame),实际: "
+        if (p.length != 2 || !Channel.class.isAssignableFrom(p[0]) || p[1] != BinaryFrame.class) {
+            throw new IllegalStateException("@AprByteFrame 方法签名必须是 (Channel, BinaryFrame),实际: "
                     + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
         }
     }
@@ -234,14 +230,29 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         }
     }
 
-    private record ByteInvocation(Object target, Method method) {
-        void invoke(Channel ch, AudioFrame frame) throws Exception {
-            try {
-                method.invoke(target, ch, frame);
-            } catch (InvocationTargetException e) {
-                throw (e.getCause() instanceof Exception ex) ? ex : new RuntimeException(e.getCause());
-            }
+    private void handleBinary(C channel, ByteBuffer payload) {
+        // 框架层不做任何 magic / 头部结构校验 —— 仅取首字节作为路由键,
+        // 剩余字节原样交给业务 controller。这样:
+        //   1. 框架不耦合具体协议布局(协议头是业务的事);
+        //   2. 业务可以自己定义完整 binary 协议(magic / flags / seq ...),
+        //      框架负责把 byte[] 路由到正确的 @AprByteFrame(N) 方法。
+        if (payload == null || payload.remaining() < 1) {
+            channel.sendError(4400, "二进制帧为空", false);
+            return;
         }
+        ByteBuffer dup = payload.duplicate();
+        int frameType = dup.get() & 0xFF;
+        byte[] rest = new byte[dup.remaining()];
+        dup.get(rest);
+        BinaryFrame frame = new BinaryFrame(frameType, rest);
+
+        ByteInvocation inv = byteRoutingTable.get(frame.frameType());
+        if (inv == null) {
+            log.info("[{}] 未匹配二进制帧策略 sid={} frameType={}", channel(), channel.id(), frame.frameType());
+            channel.sendError(4400, "不支持的帧类型 " + frame.frameType(), false);
+            return;
+        }
+        invokeByte(channel, inv, frame);
     }
 
     // ============ 抽象 API ============
@@ -302,20 +313,14 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         invokeText(channel, inv, payloadJson);
     }
 
-    private void handleBinary(C channel, ByteBuffer payload) {
-        Optional<AudioFrame> parsed = parseAudioFrame(payload);
-        if (parsed.isEmpty()) {
-            channel.sendError(4400, "二进制帧非法(magic / payloadLen 不匹配)", false);
-            return;
+    private void invokeByte(C channel, ByteInvocation inv, BinaryFrame frame) {
+        try {
+            inv.invoke(channel, frame);
+        } catch (Exception ex) {
+            log.warn("[{}] 二进制帧处理器异常 sid={} frameType={} : {}",
+                    channel(), channel.id(), frame.frameType(), ex.getMessage());
+            channel.sendError(4400, "处理失败: " + ex.getMessage(), false);
         }
-        AudioFrame frame = parsed.get();
-        ByteInvocation inv = byteRoutingTable.get(frame.frameType());
-        if (inv == null) {
-            log.info("[{}] 未匹配二进制帧策略 sid={} frameType={}", channel(), channel.id(), frame.frameType());
-            channel.sendError(4400, "不支持的帧类型 " + frame.frameType(), false);
-            return;
-        }
-        invokeByte(channel, inv, frame);
     }
 
     private void invokeText(C channel, TextInvocation inv, String payload) {
@@ -330,41 +335,19 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         }
     }
 
-    private void invokeByte(C channel, ByteInvocation inv, AudioFrame frame) {
-        try {
-            inv.invoke(channel, frame);
-        } catch (Exception ex) {
-            log.warn("[{}] 二进制帧处理器异常 sid={} frameType={} : {}",
-                    channel(), channel.id(), frame.frameType(), ex.getMessage());
-            channel.sendError(4400, "处理失败: " + ex.getMessage(), false);
+    private record ByteInvocation(Object target, Method method) {
+        void invoke(Channel ch, BinaryFrame frame) throws Exception {
+            try {
+                method.invoke(target, ch, frame);
+            } catch (InvocationTargetException e) {
+                throw (e.getCause() instanceof Exception ex) ? ex : new RuntimeException(e.getCause());
+            }
         }
     }
 
     // ============ 帧头解析 ============
-
-    private Optional<AudioFrame> parseAudioFrame(ByteBuffer payload) {
-        if (payload == null || payload.remaining() < FRAME_HEADER_BYTES) {
-            return Optional.empty();
-        }
-        ByteBuffer buffer = payload.duplicate().order(ByteOrder.BIG_ENDIAN);
-        int magic = buffer.get() & 0xFF;
-        if (magic != FRAME_MAGIC) {
-            return Optional.empty();
-        }
-        int version = buffer.get() & 0xFF;
-        int frameType = buffer.get() & 0xFF;
-        int flags = buffer.get() & 0xFF;
-        long seq = buffer.getInt() & 0xFFFFFFFFL;
-        long tsMs = buffer.getInt() & 0xFFFFFFFFL;
-        int streamId = buffer.getShort() & 0xFFFF;
-        int payloadLen = buffer.getShort() & 0xFFFF;
-        if (payloadLen != buffer.remaining()) {
-            return Optional.empty();
-        }
-        byte[] pcm = new byte[payloadLen];
-        buffer.get(pcm);
-        return Optional.of(new AudioFrame(version, frameType, flags, seq, tsMs, streamId, pcm));
-    }
+    // Aperture 0.5 起,框架不再解析任何协议头 —— 二进制路由仅取首字节作为 frameType,
+    // 业务 controller 自决 magic / flags / seq 等字段布局。
 
     private String readType(String json) {
         try {

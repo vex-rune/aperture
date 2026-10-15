@@ -1,4 +1,4 @@
-package com.xinli.aperture.channel;
+package com.vex.aperture.channel;
 
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;

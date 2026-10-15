@@ -1,4 +1,4 @@
-package com.xinli.aperture.channel;
+package com.vex.aperture.channel;
 
 import org.springframework.web.socket.CloseStatus;
 

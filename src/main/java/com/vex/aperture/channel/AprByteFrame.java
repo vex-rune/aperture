@@ -1,4 +1,4 @@
-package com.xinli.aperture.channel;
+package com.vex.aperture.channel;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

@@ -1,8 +1,11 @@
-package com.xinli.aperture.channel.spi;
+package com.vex.aperture.channel.spi;
 
-import com.xinli.aperture.channel.AbstractChannelHandler;
-import com.xinli.aperture.channel.Channel;
-import org.springframework.web.socket.*;
+import com.vex.aperture.channel.AbstractChannelHandler;
+import com.vex.aperture.channel.Channel;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.WebSocketHandler;
+import org.springframework.web.socket.WebSocketMessage;
+import org.springframework.web.socket.WebSocketSession;
 
 /**
  * 一层适配 —— 把 Spring 协议的 {@link WebSocketHandler} 回调转交给具体的
