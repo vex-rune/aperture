@@ -24,9 +24,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-          # 在 ~/.m2 写入 server id = github 的 settings,这样 mvn deploy 会自动用 GITHUB_TOKEN
+          cache: maven
           server-id: github
-          settings-path: ${{ github.workspace }}/.github/settings.xml
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
 
       - name: Build & test
         run: mvn -B -ntp verify
@@ -34,4 +35,5 @@ jobs:
       - name: Publish to GitHub Packages
         run: mvn -B -ntp deploy
         env:
+          GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.vex.aperture</groupId>
         <artifactId>aperture-parent</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
         <relativePath>..</relativePath>
     </parent>
 
@@ -23,6 +23,8 @@
     <properties>
         <!-- demo 模块默认不打 fat jar;若要打, -Ddemo.skip-fat=false -->
         <demo.skip-fat>true</demo.skip-fat>
+        <!-- demo 不是发布制品,跳过 deploy -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <dependencies>
