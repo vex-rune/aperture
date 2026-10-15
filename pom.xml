@@ -9,6 +9,7 @@
         <groupId>com.vex.aperture</groupId>
         <artifactId>aperture-parent</artifactId>
         <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>aperture-core</artifactId>
