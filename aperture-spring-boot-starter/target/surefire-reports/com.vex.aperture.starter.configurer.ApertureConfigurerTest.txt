@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.vex.aperture.starter.configurer.ApertureConfigurerTest
--------------------------------------------------------------------------------
-Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.170 s -- in com.vex.aperture.starter.configurer.ApertureConfigurerTest
