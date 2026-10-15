@@ -9,6 +9,7 @@
         <groupId>com.vex.aperture</groupId>
         <artifactId>aperture-parent</artifactId>
         <version>1.0.0</version>
+        <relativePath>..</relativePath>
     </parent>
 
     <artifactId>aperture-spring-boot-starter</artifactId>
