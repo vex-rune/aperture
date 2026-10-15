@@ -1,0 +1,38 @@
+# GitHub Actions: 每次 push / PR 都跑 — 校验能编、测试过、不出 jar 包也不走 maven deploy
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: mvn verify (JDK 21)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 21(Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 编译 + 测试(略过 publish)
+        run: mvn -B -ntp -e -ntp verify -DskipTests=false
+
+      - name: 上传 verify 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: ignore

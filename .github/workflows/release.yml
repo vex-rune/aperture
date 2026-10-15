@@ -1,0 +1,52 @@
+# 打 jar 并推到 GitHub Release —— 通过打 tag 触发,例如:
+#   git tag v0.3.0 && git push origin v0.3.0
+# 自动跑 mvn verify + package,然后把 jar/pom 等附到 release.
+#
+# 本 workflow 不发 Maven Central(需要 OSSR/GPG);仅发 GitHub Release 渠道下载.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: build jar / attach to release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: mvn package(带源码/快照)
+        run: |
+          mvn -B -ntp -DskipTests=false \
+              -Dmaven.javadoc.skip=true \
+              package source:jar -Dtag=${GITHUB_REF_NAME}
+
+      - name: 收集产物到临时目录
+        id: collect
+        run: |
+          mkdir -p artifacts
+          cp target/*.jar artifacts/
+          ls -la artifacts/
+
+      - name: 创建 / 更新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.jar
