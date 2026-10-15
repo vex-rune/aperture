@@ -1,0 +1,24 @@
+server:
+  port: 8099
+
+aperture:
+  enabled: true
+  base-packages: com.vex.aperture.demo
+  path-prefix: /ac
+  allowed-origins: "*"
+  idle-timeout: 5m
+  interceptors:
+    trace:
+      enabled: true
+      key: X-Trace-Id
+    cors:
+      # 临时关掉排除干扰;CorsHandshakeInterceptor 在 Servlet context 未就绪的情况下会抛 IllegalStateException
+      enabled: false
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] [traceId=%X{traceId:-}] %-5level %logger{36} - %msg%n"
+  level:
+    com.vex.aperture: INFO
+    com.xinli.aperture: INFO
+    com.vex.aperture.demo: DEBUG

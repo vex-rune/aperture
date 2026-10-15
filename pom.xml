@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.vex.aperture</groupId>
+    <artifactId>aperture-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>Aperture Parent</name>
+    <description>
+        Aperture framework 父模块 —— 聚合 aperture-core(框架核心) +
+        aperture-spring-boot-starter(Spring Boot 自动装配 + 内置拦截器) 两个子模块。
+        本模块是聚合 pom,自身不发布 jar。
+    </description>
+    <url>https://github.com/vex-rune/aperture</url>
+
+    <licenses>
+        <license>
+            <name>The Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:git://github.com/vex-rune/aperture.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/vex-rune/aperture.git</developerConnection>
+        <url>https://github.com/vex-rune/aperture</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <distributionManagement>
+        <!-- GitHub Packages —— vex-rune/aperture 仓库的 Maven 路径 = maven -->
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages (vex-rune/aperture/maven)</name>
+            <url>https://maven.pkg.github.com/vex-rune/aperture</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages Snapshots (vex-rune/aperture/maven)</name>
+            <url>https://maven.pkg.github.com/vex-rune/aperture</url>
+        </snapshotRepository>
+    </distributionManagement>
+
+    <repositories>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages (vex-rune/aperture/maven)</name>
+            <url>https://maven.pkg.github.com/vex-rune/aperture</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <modules>
+        <module>aperture-core</module>
+        <module>aperture-spring-boot-starter</module>
+        <module>aperture-demo</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <lombok.version>1.18.34</lombok.version>
+    </properties>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.vex.aperture</groupId>
+                <artifactId>aperture-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.vex.aperture</groupId>
+                <artifactId>aperture-spring-boot-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.vex.aperture</groupId>
+                <artifactId>aperture-demo</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

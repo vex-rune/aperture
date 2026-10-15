@@ -1,0 +1,37 @@
+name: release
+
+on:
+  push:
+    # 推送 v*.*.* 标签触发发布到 maven path
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  packages: write        # 必须 —— 否则 GITHUB_TOKEN 不能 push 到 GitHub Packages
+
+jobs:
+  publish:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          # 在 ~/.m2 写入 server id = github 的 settings,这样 mvn deploy 会自动用 GITHUB_TOKEN
+          server-id: github
+          settings-path: ${{ github.workspace }}/.github/settings.xml
+
+      - name: Build & test
+        run: mvn -B -ntp verify
+
+      - name: Publish to GitHub Packages
+        run: mvn -B -ntp deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

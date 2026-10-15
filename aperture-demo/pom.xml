@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.vex.aperture</groupId>
+        <artifactId>aperture-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>aperture-demo</artifactId>
+    <packaging>jar</packaging>
+    <name>Aperture Demo</name>
+    <description>
+        可运行的 demo 模块 —— 演示 starter + @AprController 标准用法。
+        默认不打 fat jar(避免污染 reactor 构建产物),由业务方按需 `mvn -pl aperture-demo spring-boot:run` 单独启动。
+    </description>
+
+    <properties>
+        <!-- demo 模块默认不打 fat jar;若要打, -Ddemo.skip-fat=false -->
+        <demo.skip-fat>true</demo.skip-fat>
+    </properties>
+
+    <dependencies>
+        <!-- Aperture starter + core -->
+        <dependency>
+            <groupId>com.vex.aperture</groupId>
+            <artifactId>aperture-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.vex.aperture</groupId>
+            <artifactId>aperture-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 默认不打 fat jar:业务方需要运行时单独跑 spring-boot:run。
+                         想打 jar 时执行: mvn -pl aperture-demo package -Ddemo.skip-fat=false -->
+                    <skip>${demo.skip-fat}</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

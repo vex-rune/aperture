@@ -1,0 +1,86 @@
+{
+  "groups": [
+    {
+      "name": "aperture",
+      "type": "com.vex.aperture.starter.ApertureProperties",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties"
+    },
+    {
+      "name": "aperture.interceptors",
+      "type": "com.vex.aperture.starter.ApertureProperties$Interceptors",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "sourceMethod": "getInterceptors()"
+    },
+    {
+      "name": "aperture.interceptors.cors",
+      "type": "com.vex.aperture.starter.ApertureProperties$Interceptors$Cors",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties$Interceptors",
+      "sourceMethod": "getCors()"
+    },
+    {
+      "name": "aperture.interceptors.trace",
+      "type": "com.vex.aperture.starter.ApertureProperties$Interceptors$Trace",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties$Interceptors",
+      "sourceMethod": "getTrace()"
+    }
+  ],
+  "properties": [
+    {
+      "name": "aperture.allowed-origins",
+      "type": "java.lang.String",
+      "description": "Cross-origin 允许列表;Spring 允许通配符。",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "defaultValue": "*"
+    },
+    {
+      "name": "aperture.base-packages",
+      "type": "java.lang.String",
+      "description": "起始包列表,逗号分隔,yaml 也可写数组。",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "defaultValue": ""
+    },
+    {
+      "name": "aperture.enabled",
+      "type": "java.lang.Boolean",
+      "description": "是否启用 starter 自动配置;设为 false 完全跳过。",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "defaultValue": true
+    },
+    {
+      "name": "aperture.idle-timeout",
+      "type": "java.time.Duration",
+      "description": "会话空闲超时;Time-based,如 30s \/ 5m \/ 1h。",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "defaultValue": "5m"
+    },
+    {
+      "name": "aperture.interceptors.cors.enabled",
+      "type": "java.lang.Boolean",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties$Interceptors$Cors",
+      "defaultValue": true
+    },
+    {
+      "name": "aperture.interceptors.trace.enabled",
+      "type": "java.lang.Boolean",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties$Interceptors$Trace",
+      "defaultValue": true
+    },
+    {
+      "name": "aperture.interceptors.trace.key",
+      "type": "java.lang.String",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties$Interceptors$Trace",
+      "defaultValue": "X-Trace-Id"
+    },
+    {
+      "name": "aperture.path-prefix",
+      "type": "java.lang.String",
+      "description": "全局路径前缀;为空表示无。",
+      "sourceType": "com.vex.aperture.starter.ApertureProperties",
+      "defaultValue": ""
+    }
+  ],
+  "hints": [],
+  "ignored": {
+    "properties": []
+  }
+}
