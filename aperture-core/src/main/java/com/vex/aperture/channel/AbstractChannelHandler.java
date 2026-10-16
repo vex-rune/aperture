@@ -142,21 +142,28 @@ public abstract class AbstractChannelHandler<C extends Channel> {
 
     /// 业务方法形参校验
     private static void validateTextMethod(Method m) {
-        Class<?>[] p = m.getParameterTypes();
-        if (p.length != 2 || !Channel.class.isAssignableFrom(p[0])) {
-            throw new IllegalStateException("@AprTextFrame 方法形参 0 必须是 Channel,实际: "
-                    + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
-        }
         Parameter[] params = m.getParameters();
-        Class<?> second = p[1];
-        if (second == String.class) {
-            return; // 签名:Channel + 原始 String payload
+        int channelCount = 0;
+        int payloadCount = 0;
+        for (Parameter param : params) {
+            Class<?> type = param.getType();
+            if (Channel.class.isAssignableFrom(type)) {
+                channelCount++;
+            } else if (type == String.class || param.isAnnotationPresent(AprPayload.class)) {
+                payloadCount++;
+            } else {
+                throw new IllegalStateException("@AprTextFrame 方法参数必须是 Channel、String 或 @AprPayload 标注的类型,实际: "
+                        + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(params));
+            }
         }
-        if (params[1].isAnnotationPresent(AprPayload.class)) {
-            return; // 签名:Channel + @AprPayload SomeRecord
+        if (channelCount > 1) {
+            throw new IllegalStateException("@AprTextFrame 方法最多只能有一个 Channel 参数: "
+                    + m.getDeclaringClass().getName() + "#" + m.getName());
         }
-        throw new IllegalStateException("@AprTextFrame 方法形参 1 必须是 String 或 @AprPayload 标注的非 String,实际: "
-                + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
+        if (payloadCount > 1) {
+            throw new IllegalStateException("@AprTextFrame 方法最多只能有一个 String 或 @AprPayload 参数: "
+                    + m.getDeclaringClass().getName() + "#" + m.getName());
+        }
     }
 
     private static void validateByteMethod(Method m) {
@@ -179,14 +186,14 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     private static final class TextInvocation {
         final Object target;
         final Method method;
-        final Parameter payloadParam; // 第二个形参(必非空)
+        final Parameter[] params;
         final JsonMapper jsonMapper;
         final Validator validator;
 
         TextInvocation(Object target, Method method, JsonMapper jsonMapper, Validator validator) {
             this.target = target;
             this.method = method;
-            this.payloadParam = method.getParameters()[1];
+            this.params = method.getParameters();
             this.jsonMapper = jsonMapper;
             this.validator = validator;
         }
@@ -200,31 +207,37 @@ public abstract class AbstractChannelHandler<C extends Channel> {
          * @throws PayloadValidationException 形参校验失败(载荷解析失败 / Bean Validation 不通过)
          */
         void invoke(Channel ch, String payload) throws Exception {
-            Object[] args;
-            if (payloadParam.getType() == String.class) {
-                args = new Object[] { ch, payload };
-            } else {
-                // @AprPayload 路径:从外层信封 {type,sid,...,payload:{...}} 抽出 payload 字段,
-                // 再用 Jackson 反序列化到 dto 类。payload 字段为 null / 缺失,视作 {}。
-                Class<?> dtoType = payloadParam.getType();
-                String inner = extractPayloadJson(payload, jsonMapper);
-                Object dto;
-                try {
-                    dto = (inner == null) ? jsonMapper.readValue("{}", dtoType) : jsonMapper.readValue(inner, dtoType);
-                } catch (Exception ex) {
-                    throw new PayloadValidationException("载荷解析失败: " + ex.getMessage());
+            Object[] args = new Object[params.length];
+            for (int i = 0; i < params.length; i++) {
+                Parameter param = params[i];
+                Class<?> type = param.getType();
+                if (Channel.class.isAssignableFrom(type)) {
+                    args[i] = ch;
+                } else if (type == String.class) {
+                    args[i] = payload;
+                } else if (param.isAnnotationPresent(AprPayload.class)) {
+                    // @AprPayload 路径:从外层信封 {type,sid,...,payload:{...}} 抽出 payload 字段,
+                    // 再用 Jackson 反序列化到 dto 类。payload 字段为 null / 缺失,视作 {}。
+                    Class<?> dtoType = type;
+                    String inner = extractPayloadJson(payload, jsonMapper);
+                    Object dto;
+                    try {
+                        dto = (inner == null) ? jsonMapper.readValue("{}", dtoType) : jsonMapper.readValue(inner, dtoType);
+                    } catch (Exception ex) {
+                        throw new PayloadValidationException("载荷解析失败: " + ex.getMessage());
+                    }
+                    Set<? extends ConstraintViolation<Object>> violations = validator.validate(dto);
+                    if (!violations.isEmpty()) {
+                        String detail = violations.stream()
+                                .map(v -> {
+                                    String path = v.getPropertyPath().toString();
+                                    return (path == null || path.isEmpty()) ? v.getMessage() : path + " " + v.getMessage();
+                                })
+                                .collect(Collectors.joining("; "));
+                        throw new PayloadValidationException(detail);
+                    }
+                    args[i] = dto;
                 }
-                Set<? extends ConstraintViolation<Object>> violations = validator.validate(dto);
-                if (!violations.isEmpty()) {
-                    String detail = violations.stream()
-                            .map(v -> {
-                                String path = v.getPropertyPath().toString();
-                                return (path == null || path.isEmpty()) ? v.getMessage() : path + " " + v.getMessage();
-                            })
-                            .collect(Collectors.joining("; "));
-                    throw new PayloadValidationException(detail);
-                }
-                args = new Object[] { ch, dto };
             }
             try {
                 method.invoke(target, args);
