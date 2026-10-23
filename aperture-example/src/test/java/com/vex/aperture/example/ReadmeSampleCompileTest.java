@@ -1,6 +1,7 @@
 package com.vex.aperture.example;
 
 import com.vex.aperture.channel.Channel;
+import com.vex.aperture.channel.Response;
 import com.vex.aperture.channel.plugin.AprChannelPlugin;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
@@ -45,8 +46,7 @@ class ReadmeSampleCompileTest implements AprChannelPlugin {
             return true;
         }
         if (channel instanceof Channel ch) {
-            ch.sendObject("error", Channel.payload(
-                    "code", 4403, "message", "鉴权失败", "fatal", true));
+            ch.sendObject("error", Response.error("unauthorized", "鉴权失败"));
         }
         closeQuietly(session);
         return false;

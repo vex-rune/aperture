@@ -160,17 +160,31 @@ echo.dto.done
 
 ```
 error
-{"code":4400,"message":"text 不能为空","fatal":false}
+{"code":"bad_request","message":"text 不能为空","data":null}
 ```
 
-## 错误码
+## 统一响应结构
+
+所有下行报文共用一个外壳（[Response](aperture-core/src/main/java/com/vex/aperture/channel/Response.java)）：
+
+```java
+public record Response<T>(String code, String message, T data) {}
+```
+
+`code` 是**语义化字符串**而非数字 —— 客户端不需要维护一张数字码表，
+日志、埋点、前端提示里直接可读。框架内置的：
 
 | code | 触发条件 |
 |---|---|
-| `4400` | 缺换行分隔符 / 首行为空、载荷 JSON 非法、`@AprPayload` 校验失败、业务方法抛异常 |
-| `4400` | 二进制帧为空 / `frameType` 未注册 |
-| `4401` | 首行路由键未注册到任何 `@AprTextFrame` |
-| `4409` | 帧超限(随后以 `1009` 关闭连接) |
+| `ok` | 成功（`Response.ok(data)`） |
+| `bad_request` | 缺换行分隔符 / 首行为空、载荷 JSON 非法、`@AprPayload` 校验失败 |
+| `not_found` | 首行路由键未注册到任何 `@AprTextFrame`；二进制 `frameType` 未注册 |
+| `internal` | 业务方法抛异常 |
+| `frame_too_large` | 帧超限（随后以 `1009` 关闭连接） |
+| `heartbeat_timeout` | 客户端心跳超时（随后以 `1001` 关闭连接） |
+
+**错误帧的载荷结构由业务决定** —— 覆写 `errorPayload` 即可换成自己的 record / POJO / Map，
+框架不强制 `Response` 形态（见下文[自定义插件](#自定义插件)）。
 
 ## 通道插件(可插拔 · 可单独开关)
 
@@ -222,11 +236,11 @@ aperture:
 ### 帧大小限制
 
 超限帧**不会**进入 Jackson 反序列化 —— 一个超大载荷不会先吃掉内存才被拒绝。
-超限时回 `error{4409}` 并以 `1009`(消息体过大)关闭连接。
+超限时回 `error{frame_too_large}` 并以 `1009`(消息体过大)关闭连接。
 
 ```
 error
-{"code":4409,"message":"文本帧超限: 128 > 32","fatal":true}
+{"code":"frame_too_large","message":"文本帧超限: 128 > 32","data":null}
 ```
 
 ### 自定义插件
@@ -246,9 +260,9 @@ SPI 全貌 —— 只有 `enabled()` 是抽象方法，其余四个钩子都有�
 `channel` 声明为 `Object`，需要下行报文时转成 `Channel` 即可：
 
 ```java
-if (channel instanceof Channel ch) {
-    ch.sendObject("error", Channel.payload("code", 4403, "message", "鉴权失败", "fatal", true));
-}
+	if (channel instanceof Channel ch) {
+	    ch.sendObject("error", Response.error("unauthorized", "鉴权失败"));
+	}
 ```
 
 **完整示例** —— 首帧 token 鉴权，未通过就断连：
@@ -257,6 +271,7 @@ if (channel instanceof Channel ch) {
 package com.your.biz.ws;
 
 import com.vex.aperture.channel.Channel;
+import com.vex.aperture.channel.Response;
 import com.vex.aperture.channel.plugin.AprChannelPlugin;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
@@ -294,8 +309,7 @@ public class TokenAuthPlugin implements AprChannelPlugin {
         }
         // 没带 token 或 token 无效 —— 立刻断,后续业务报文一律不放行
         if (channel instanceof Channel ch) {
-            ch.sendObject("error", Channel.payload(
-                    "code", 4403, "message", "鉴权失败", "fatal", true));
+            ch.sendObject("error", Response.error("unauthorized", "鉴权失败"));
         }
         closeQuietly(session);
         return false;                               // 拦截:业务路由不会被调用

@@ -53,7 +53,7 @@ class AprFrameLimitPluginTest {
     // ============ 超限拦截 ============
 
     @Test
-    @DisplayName("文本帧超限 → 拦截该帧 + error{4409} + 以 1009 关闭")
+    @DisplayName("文本帧超限 → 拦截该帧 + error{frame_too_large} + 以 1009 关闭")
     void textTooLargeRejected() throws Exception {
         ApertureChannelProperties props = new ApertureChannelProperties();
         props.getFrameLimit().setMaxTextBytes(16);
@@ -66,13 +66,15 @@ class AprFrameLimitPluginTest {
 
         assertThat(pass).as("超限帧应被拦截").isFalse();
         assertThat(ch.sent).hasSize(1);
-        assertThat(ch.sent.get(0)).startsWith("error\n").contains("\"code\":4409").contains("文本帧超限");
-        assertThat(ch.sent.get(0)).contains("\"fatal\":true");
+        assertThat(ch.sent.get(0))
+                .startsWith("error\n")
+                .contains("\"code\":\"frame_too_large\"")
+                .contains("文本帧超限");
         verify(s, atLeastOnce()).close(AprFrameLimitPlugin.TOO_BIG);
     }
 
     @Test
-    @DisplayName("二进制帧超限 → 拦截该帧 + error{4409} + 以 1009 关闭")
+    @DisplayName("二进制帧超限 → 拦截该帧 + error{frame_too_large} + 以 1009 关闭")
     void binaryTooLargeRejected() throws Exception {
         ApertureChannelProperties props = new ApertureChannelProperties();
         props.getFrameLimit().setMaxBinaryBytes(4);
@@ -84,7 +86,10 @@ class AprFrameLimitPluginTest {
         boolean pass = plugin.onInbound(s, ch, new BinaryMessage(new byte[32]));
 
         assertThat(pass).isFalse();
-        assertThat(ch.sent.get(0)).contains("\"code\":4409").contains("二进制帧超限");
+        assertThat(ch.sent.get(0))
+                .startsWith("error\n")
+                .contains("\"code\":\"frame_too_large\"")
+                .contains("二进制帧超限");
         verify(s, atLeastOnce()).close(AprFrameLimitPlugin.TOO_BIG);
     }
 

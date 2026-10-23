@@ -96,7 +96,7 @@ class AprClientHeartbeatPluginTest {
     // ============ 超时 ============
 
     @Test
-    @DisplayName("超时未收到 heartbeat.ping → 回 session.reject{4408} 并以 1001 关闭")
+    @DisplayName("超时未收到 heartbeat.ping → 回 session.reject{heartbeat_timeout} 并以 1001 关闭")
     void timeoutRejectsAndCloses() throws Exception {
         ApertureChannelProperties props = new ApertureChannelProperties();
         props.getClientHeartbeat().setEnabled(true);
@@ -112,7 +112,7 @@ class AprClientHeartbeatPluginTest {
         plugin.onIdle(s, ch, 5000);
 
         assertThat(ch.sent).hasSize(1);
-        assertThat(ch.sent.get(0)).startsWith("session.reject\n").contains("\"code\":4408");
+        assertThat(ch.sent.get(0)).startsWith("session.reject\n").contains("\"code\":\"heartbeat_timeout\"");
         verify(s, atLeastOnce()).close(org.mockito.ArgumentCaptor
                 .forClass(CloseStatus.class).capture());
     }

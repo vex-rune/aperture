@@ -76,9 +76,22 @@ session.ready
 
 ### 帧超限
 
-超限回 `error{4409}` 并以 `1009` 关闭连接：
+超限回 `error{frame_too_large}` 并以 `1009` 关闭连接：
 
 ```
 error
-{"code":4409,"message":"文本帧超限: 128 > 32","fatal":true}
+{"code":"frame_too_large","message":"文本帧超限: 128 > 32","data":null}
 ```
+
+### 错误码
+
+错误帧载荷默认是 [`Response`](../../aperture-core/src/main/java/com/vex/aperture/channel/Response.java)
+`{code, message, data}`，`code` 为语义化字符串：
+
+| code | 触发条件 |
+|---|---|
+| `bad_request` | 缺换行分隔符 / 首行为空、载荷 JSON 非法、`@AprPayload` 校验失败 |
+| `not_found` | 报文类型 / 二进制 `frameType` 未注册 |
+| `internal` | 业务方法抛异常 |
+| `frame_too_large` | 帧超限 |
+| `heartbeat_timeout` | 客户端心跳超时 |

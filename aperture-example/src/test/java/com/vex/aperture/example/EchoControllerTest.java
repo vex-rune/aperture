@@ -124,27 +124,31 @@ class EchoControllerTest {
     }
 
     @Test
-    @DisplayName("echo.dto 校验失败 —— text 为空触发 @NotBlank,回 error{4400}")
+    @DisplayName("echo.dto 校验失败 —— text 为空触发 @NotBlank,回 error{bad_request}")
     void echoDtoValidationFailure() throws Exception {
         Fixture f = routedFixture();
         f.sendText(ECHO_DTO_BAD);
 
-        assertThat(f.sentFrame()).isEqualTo("""
-                error
-                {"code":4400,"message":"text 不能为空","fatal":false}""");
+        // 校验消息由 Bean Validation 生成,随 JVM locale 变 —— 只断错误码与字段名
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"bad_request\"")
+                .contains("text");
     }
 
     @Test
-    @DisplayName("echo.dto 校验失败 —— repeat 越界(>100)回 error{4400}")
+    @DisplayName("echo.dto 校验失败 —— repeat 越界(>100)回 error{bad_request}")
     void echoDtoRepeatOutOfRange() throws Exception {
         Fixture f = routedFixture();
         f.sendText("""
                 echo.dto
                 {"text":"ab","repeat":999}""");
 
-        assertThat(f.sentFrame()).isEqualTo("""
-                error
-                {"code":4400,"message":"repeat 最大不能超过100","fatal":false}""");
+        // 同上 —— 消息文本随 locale 变,断错误码与字段名
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"bad_request\"")
+                .contains("repeat");
     }
 
     // ============ 二进制路由 ============
@@ -163,42 +167,79 @@ class EchoControllerTest {
     // ============ 异常路由 ============
 
     @Test
-    @DisplayName("未知报文类型 → error{4401}")
+    @DisplayName("未知报文类型 → error{not_found}")
     void unknownType() throws Exception {
         Fixture f = routedFixture();
         f.sendText(ECHO_UNKNOWN_TYPE);
 
-        assertThat(f.sentFrame()).isEqualTo("""
-                error
-                {"code":4401,"message":"未知报文类型 echo.not-exist","fatal":false}""");
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"not_found\"")
+                .contains("未知报文类型 echo.not-exist");
+    }
+
+    // ============ error 载荷结构由业务决定 ============
+
+    @Test
+    @DisplayName("覆写 errorPayload —— 错误帧载荷换成业务自己的结构")
+    void errorPayloadIsCustomizable() throws Exception {
+        try (var factory = jakarta.validation.Validation.buildDefaultValidatorFactory()) {
+            EchoController custom = new EchoController(MAPPER, factory.getValidator(),
+                    new ApertureChannelProperties()) {
+                @Override
+                protected Object errorPayload(String code, String message) {
+                    // 想发什么结构发什么结构 —— record / POJO / Map 都行
+                    return com.vex.aperture.channel.Channel.payload(
+                            "err", code, "reason", message);
+                }
+            };
+            custom.registerRoutes();
+
+            WebSocketSession s = mock(WebSocketSession.class);
+            when(s.getId()).thenReturn("s-custom");
+            when(s.isOpen()).thenReturn(true);
+            when(s.getAttributes()).thenReturn(new ConcurrentHashMap<>());
+
+            custom.handleFrame(s, new TextMessage("""
+                    no.such.type
+                    {}"""));
+
+            ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+            verify(s, atLeastOnce()).sendMessage(captor.capture());
+            assertThat(captor.getValue().getPayload()).isEqualTo("""
+                    error
+                    {"err":"not_found","reason":"未知报文类型 no.such.type"}""");
+        }
     }
 
     @Test
-    @DisplayName("缺换行分隔符 → 4400「缺少换行分隔符或报文类型为空」")
+    @DisplayName("缺换行分隔符 → bad_request")
     void missingSeparator() throws Exception {
         Fixture f = routedFixture();
         f.sendText(ECHO_NO_SEPARATOR);
 
-        assertThat(f.sentFrame()).isEqualTo("""
-                error
-                {"code":4400,"message":"缺少换行分隔符或报文类型为空","fatal":false}""");
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"bad_request\"")
+                .contains("缺少换行分隔符或报文类型为空");
     }
 
     @Test
-    @DisplayName("首行为空串 → 4400「缺少换行分隔符或报文类型为空」")
+    @DisplayName("首行为空串 → bad_request")
     void blankType() throws Exception {
         Fixture f = routedFixture();
         f.sendText("\n{\"text\":\"hi\"}");
 
-        assertThat(f.sentFrame()).isEqualTo("""
-                error
-                {"code":4400,"message":"缺少换行分隔符或报文类型为空","fatal":false}""");
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"bad_request\"")
+                .contains("缺少换行分隔符或报文类型为空");
     }
 
     // ============ 帧大小限制插件 ============
 
     @Test
-    @DisplayName("文本帧超限 → error{4409} 并以 1009 关闭连接")
+    @DisplayName("文本帧超限 → error{frame_too_large} 并以 1009 关闭连接")
     void textFrameTooLarge() throws Exception {
         ApertureChannelProperties props = new ApertureChannelProperties();
         props.getFrameLimit().setMaxTextBytes(32);
@@ -206,13 +247,16 @@ class EchoControllerTest {
 
         f.sendText("echo.raw\n{\"text\":\"" + "x".repeat(100) + "\"}");
 
-        assertThat(f.sentFrame()).contains("\"code\":4409").contains("文本帧超限");
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"frame_too_large\"")
+                .contains("文本帧超限");
         assertThat(f.closedWith()).isNotNull();
         assertThat(f.closedWith().getCode()).isEqualTo(1009);
     }
 
     @Test
-    @DisplayName("二进制帧超限 → error{4409} 并以 1009 关闭连接")
+    @DisplayName("二进制帧超限 → error{frame_too_large} 并以 1009 关闭连接")
     void binaryFrameTooLarge() throws Exception {
         ApertureChannelProperties props = new ApertureChannelProperties();
         props.getFrameLimit().setMaxBinaryBytes(4);
@@ -220,7 +264,10 @@ class EchoControllerTest {
 
         f.sendBinary(new byte[]{0x01, 0x7F, 0x00, (byte) 0x80, 0x01, 0x02});
 
-        assertThat(f.sentFrame()).contains("\"code\":4409").contains("二进制帧超限");
+        assertThat(f.sentFrame())
+                .startsWith("error\n")
+                .contains("\"code\":\"frame_too_large\"")
+                .contains("二进制帧超限");
         assertThat(f.closedWith().getCode()).isEqualTo(1009);
     }
 

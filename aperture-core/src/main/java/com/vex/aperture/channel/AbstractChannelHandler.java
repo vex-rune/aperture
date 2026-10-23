@@ -302,7 +302,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         }
     }
 
-    /// 形参校验失败的受检异常,把消息透传给 dispatcher 让它发 error{4400}
+    /// 形参校验失败的受检异常,把消息透传给 dispatcher 让它发 error{bad_request}
     static final class PayloadValidationException extends Exception {
         PayloadValidationException(String message) {
             super(message);
@@ -316,7 +316,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         //   2. 业务可以自己定义完整 binary 协议(magic / flags / seq ...),
         //      框架负责把 byte[] 路由到正确的 @AprByteFrame(N) 方法。
         if (payload == null || payload.remaining() < 1) {
-            sendError(channel, 4400, "二进制帧为空");
+            sendError(channel, Response.BAD_REQUEST, "二进制帧为空");
             return;
         }
         ByteBuffer dup = payload.duplicate();
@@ -328,7 +328,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         ByteInvocation inv = byteRoutingTable.get(frame.frameType());
         if (inv == null) {
             log.info("[{}] 未匹配二进制帧策略 sid={} frameType={}", channel(), channel.id(), frame.frameType());
-            sendError(channel, 4400, "不支持的帧类型 " + frame.frameType());
+            sendError(channel, Response.BAD_REQUEST, "不支持的帧类型 " + frame.frameType());
             return;
         }
         invokeByte(channel, inv, frame);
@@ -438,9 +438,23 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         channel.sendObject("session.ready", payload);
     }
 
-    /// 下发 error 帧
-    private void sendError(C channel, int code, String message) {
-        channel.sendObject("error", Channel.payload("code", code, "message", message, "fatal", false));
+    /// 下发 error 帧 —— 载荷结构见 {@link #errorPayload}
+    private void sendError(C channel, String code, String message) {
+        channel.sendObject("error", errorPayload(code, message));
+    }
+
+    /**
+     * 错误帧的载荷结构 —— <b>由业务决定</b>,覆写本方法即可换成自己的结构。
+     *
+     * <p>默认为 {@link Response#error} 形态:{@code {"code":"..","message":"..","data":null}}。
+     *
+     * @param code    错误码(语义短语,如 {@link Response#BAD_REQUEST})
+     * @param message 错误描述
+     *
+     * @return 错误载荷
+     */
+    protected Object errorPayload(String code, String message) {
+        return Response.error(code, message);
     }
 
     /// 框架内置路由 —— 先于业务路由表命中,业务无需注册即可使用
@@ -466,7 +480,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         TextInvocation inv = textRoutingTable.get(type);
         if (inv == null) {
             log.info("[{}] 未匹配文本帧策略 sid={} type={}", channel(), channel.id(), type);
-            sendError(channel, 4401, "未知报文类型 " + type);
+            sendError(channel, Response.NOT_FOUND, "未知报文类型 " + type);
             return;
         }
         invokeText(channel, inv, type, readPayload(frameText));
@@ -478,7 +492,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         } catch (Exception ex) {
             log.warn("[{}] 二进制帧处理器异常 sid={} frameType={} : {}",
                     channel(), channel.id(), frame.frameType(), ex.getMessage());
-            sendError(channel, 4400, "处理失败: " + ex.getMessage());
+            sendError(channel, Response.INTERNAL, "处理失败: " + ex.getMessage());
         }
     }
 
@@ -487,10 +501,10 @@ public abstract class AbstractChannelHandler<C extends Channel> {
             inv.invoke(channel, payload);
         } catch (PayloadValidationException ex) {
             log.warn("[{}] 形参校验失败 sid={} type={} : {}", channel(), channel.id(), type, ex.getMessage());
-            sendError(channel, 4400, ex.getMessage());
+            sendError(channel, Response.BAD_REQUEST, ex.getMessage());
         } catch (Exception ex) {
             log.warn("[{}] 文本帧处理器异常 sid={} type={} : {}", channel(), channel.id(), type, ex.getMessage());
-            sendError(channel, 4400, "处理失败: " + ex.getMessage());
+            sendError(channel, Response.INTERNAL, "处理失败: " + ex.getMessage());
         }
     }
 
@@ -510,7 +524,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
 
     /// 路由前置检查失败的原因(区分"分帧失败"与"type 空",避免回一句带尾空格的
     /// "未知报文类型" 让客户端无法定位)
-    private record TypeError(int code, String message) {
+    private record TypeError(String code, String message) {
     }
 
     /**
@@ -555,7 +569,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     private static TypeError checkRoutable(String frameText) {
         String type = readType(frameText);
         if (type == null) {
-            return new TypeError(4400, "缺少换行分隔符或报文类型为空");
+            return new TypeError(Response.BAD_REQUEST, "缺少换行分隔符或报文类型为空");
         }
         return null;
     }

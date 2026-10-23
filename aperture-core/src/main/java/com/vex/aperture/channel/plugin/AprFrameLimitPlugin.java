@@ -2,6 +2,7 @@ package com.vex.aperture.channel.plugin;
 
 import com.vex.aperture.channel.ApertureChannelProperties;
 import com.vex.aperture.channel.Channel;
+import com.vex.aperture.channel.Response;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -14,7 +15,7 @@ import org.springframework.web.socket.WebSocketSession;
  * <p>顺序很关键:超限帧**不会**进入 Jackson 反序列化,因此一个超大载荷不会先吃掉内存
  * 才被拒绝。
  *
- * <p>超限时回 {@code error{4409}} 并以 {@code 1009}(消息体过大,RFC 6455)关闭连接。
+ * <p>超限时回 {@code error{frame_too_large}} 并以 {@code 1009}(消息体过大,RFC 6455)关闭连接。
  *
  * @since Aperture 0.5
  */
@@ -22,9 +23,6 @@ public class AprFrameLimitPlugin implements AprChannelPlugin {
 
     /// 超限关闭码 —— 1009;Spring 未预置,手工构造
     public static final CloseStatus TOO_BIG = new CloseStatus(1009, "frame too large");
-
-    /// 错误码 —— 帧超限
-    public static final int ERR_FRAME_TOO_LARGE = 4409;
 
     private final ApertureChannelProperties props;
 
@@ -71,10 +69,8 @@ public class AprFrameLimitPlugin implements AprChannelPlugin {
     private void reject(Object channel, WebSocketSession session, String kind, int actual, int limit) {
         try {
             if (channel instanceof Channel ch) {
-                ch.sendObject("error", Channel.payload(
-                        "code", ERR_FRAME_TOO_LARGE,
-                        "message", kind + "超限: " + actual + " > " + limit,
-                        "fatal", true));
+                ch.sendObject("error", Response.error(
+                        Response.FRAME_TOO_LARGE, kind + "超限: " + actual + " > " + limit));
             }
             if (session.isOpen()) {
                 session.close(TOO_BIG);

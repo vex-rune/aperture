@@ -72,9 +72,8 @@ class AbstractChannelHandlerAprPayloadTest {
 
         @Override
         public void sendObject(String type, Object payload) {
-            java.util.Map<?, ?> m = (java.util.Map<?, ?>) payload;
-            Object code = m.get("code");
-            recorder.sent.add(code == null ? type : type + ",code=" + code + ",msg=" + m.get("message"));
+            Response<?> r = (Response<?>) payload;
+            recorder.sent.add(type + ",code=" + r.code() + ",msg=" + r.message());
         }
     }
 

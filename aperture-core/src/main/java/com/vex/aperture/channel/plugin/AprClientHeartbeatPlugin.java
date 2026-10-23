@@ -3,6 +3,7 @@ package com.vex.aperture.channel.plugin;
 import com.vex.aperture.channel.AbstractChannelHandler;
 import com.vex.aperture.channel.ApertureChannelProperties;
 import com.vex.aperture.channel.Channel;
+import com.vex.aperture.channel.Response;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketMessage;
@@ -84,9 +85,9 @@ public class AprClientHeartbeatPlugin implements AprChannelPlugin {
         // 客户端心跳断线 —— 先回 reject 说明原因,再关闭
         try {
             if (channel instanceof Channel ch) {
-                ch.sendObject("session.reject", Channel.payload(
-                        "code", 4408,
-                        "message", "客户端心跳超时: " + sincePing + "ms 未收到 heartbeat.ping"));
+                ch.sendObject("session.reject", Response.error(
+                        Response.HEARTBEAT_TIMEOUT,
+                        "客户端心跳超时: " + sincePing + "ms 未收到 heartbeat.ping"));
             }
             if (session.isOpen()) {
                 session.close(TIMEOUT_STATUS);
