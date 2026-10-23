@@ -22,11 +22,13 @@ import java.util.stream.Collectors;
  * 配合 {@link com.vex.aperture.channel.spi.AprControllerRegistry} 做 {@code @AprController}
  * 自动路由注册。
  *
- * <p>业务方法签名(任选其一):
+ * <p>业务方法签名(除首参 {@code Channel} 外,其余形参任意组合):
  * <ul>
  *   <li>{@code void onXxx(Channel c, String payloadJson)} — 原始 JSON 载荷;</li>
  *   <li>{@code void onXxx(Channel c, @AprPayload SomeRecord req)} — 经 Jackson 反序列化 + Bean Validation;</li>
- *   <li>{@code void onXxx(Channel c, BinaryFrame frame)} — 仅二进制帧路由;</li>
+ *   <li>{@code void onXxx(Channel c, @AprHeader("sessionId") String sid)} — 协议头单字段({@code type} / {@code sessionId} / {@code seq});</li>
+ *   <li>{@code void onXxx(Channel c, @AprHeaders AprFrameHeader header)} — 整个协议头;</li>
+ *   <li>{@code void onXxx(Channel c, BinaryFrame frame)} — 仅二进制帧路由。</li>
  * </ul>
  *
  * <p>启动期反射建路由表;同一 {@code @AprTextFrame("type")} / {@code @AprByteFrame(N)} 不可重复,
@@ -132,20 +134,59 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     /// 业务方法形参校验
     private static void validateTextMethod(Method m) {
         Class<?>[] p = m.getParameterTypes();
-        if (p.length != 2 || !Channel.class.isAssignableFrom(p[0])) {
+        Parameter[] params = m.getParameters();
+        if (p.length < 2 || !Channel.class.isAssignableFrom(p[0])) {
             throw new IllegalStateException("@AprTextFrame 方法形参 0 必须是 Channel,实际: "
                     + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
         }
-        Parameter[] params = m.getParameters();
-        Class<?> second = p[1];
-        if (second == String.class) {
-            return; // 签名:Channel + 原始 String payload
+        int rawCount = 0;
+        int dtoCount = 0;
+        for (int i = 1; i < p.length; i++) {
+            AprHeader single = params[i].getAnnotation(AprHeader.class);
+            AprHeaders whole = params[i].getAnnotation(AprHeaders.class);
+            if (single != null && whole != null) {
+                throw new IllegalStateException("@AprHeader 与 @AprHeaders 不能标注在同一形参: "
+                        + m.getDeclaringClass().getName() + "#" + m.getName());
+            }
+            if (whole != null) {
+                if (p[i] != AprFrameHeader.class) {
+                    throw new IllegalStateException("@AprHeaders 形参类型必须是 AprFrameHeader,实际: "
+                            + m.getDeclaringClass().getName() + "#" + m.getName() + " -> " + p[i].getName());
+                }
+                continue;
+            }
+            if (single != null) {
+                String field = single.value();
+                if (!"type".equals(field) && !"sessionId".equals(field) && !"seq".equals(field)) {
+                    throw new IllegalStateException("@AprHeader(\"" + field + "\") 不是合法协议头字段(可选 type / sessionId / seq): "
+                            + m.getDeclaringClass().getName() + "#" + m.getName());
+                }
+                if ("seq".equals(field) && p[i] != Long.class && p[i] != long.class) {
+                    throw new IllegalStateException("@AprHeader(\"seq\") 形参类型必须是 Long,实际: "
+                            + m.getDeclaringClass().getName() + "#" + m.getName() + " -> " + p[i].getName());
+                }
+                if (!"seq".equals(field) && p[i] != String.class) {
+                    throw new IllegalStateException("@AprHeader(\"" + field + "\") 形参类型必须是 String,实际: "
+                            + m.getDeclaringClass().getName() + "#" + m.getName() + " -> " + p[i].getName());
+                }
+                continue;
+            }
+            // 未标注的形参:只能是原始 String 载荷 或 @AprPayload DTO,两者各至多一个
+            if (p[i] == String.class) {
+                rawCount++;
+                continue;
+            }
+            if (params[i].isAnnotationPresent(AprPayload.class)) {
+                dtoCount++;
+                continue;
+            }
+            throw new IllegalStateException("@AprTextFrame 方法未标注形参 " + i + " 必须是 String 或 @AprPayload 标注的非 String,实际: "
+                    + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
         }
-        if (params[1].isAnnotationPresent(AprPayload.class)) {
-            return; // 签名:Channel + @AprPayload SomeRecord
+        if (rawCount + dtoCount > 1) {
+            throw new IllegalStateException("@AprTextFrame 方法的载荷形参(原始 String / @AprPayload)至多一个,实际: "
+                    + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
         }
-        throw new IllegalStateException("@AprTextFrame 方法形参 1 必须是 String 或 @AprPayload 标注的非 String,实际: "
-                + m.getDeclaringClass().getName() + "#" + m.getName() + Arrays.toString(p));
     }
 
     private static void validateByteMethod(Method m) {
@@ -168,36 +209,75 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     private static final class TextInvocation {
         final Object target;
         final Method method;
-        final Parameter payloadParam; // 第二个形参(必非空)
+        final Parameter[] params;
+        /// 原始载荷形参下标;无则 -1
+        final int rawPayloadIndex;
+        /// @AprPayload DTO 形参下标;无则 -1
+        final int dtoIndex;
+        /// @AprHeader 形参下标;无则 -1
+        final int[] singleHeaderIdx;
+        /// 与 singleHeaderIdx 一一对应的字段名
+        final String[] singleHeaderFields;
+        /// @AprHeaders 形参下标;无则 -1
+        final int wholeHeaderIndex;
         final JsonMapper jsonMapper;
         final Validator validator;
 
         TextInvocation(Object target, Method method, JsonMapper jsonMapper, Validator validator) {
             this.target = target;
             this.method = method;
-            this.payloadParam = method.getParameters()[1];
+            this.params = method.getParameters();
             this.jsonMapper = jsonMapper;
             this.validator = validator;
+            int raw = -1;
+            int dto = -1;
+            int whole = -1;
+            List<Integer> singles = new ArrayList<>();
+            List<String> fields = new ArrayList<>();
+            for (int i = 1; i < params.length; i++) {
+                AprHeader h = params[i].getAnnotation(AprHeader.class);
+                if (h != null) {
+                    singles.add(i);
+                    fields.add(h.value());
+                    continue;
+                }
+                if (params[i].isAnnotationPresent(AprHeaders.class)) {
+                    whole = i;
+                    continue;
+                }
+                if (params[i].getType() == String.class) {
+                    raw = i;
+                } else {
+                    dto = i;
+                }
+            }
+            this.rawPayloadIndex = raw;
+            this.dtoIndex = dto;
+            this.singleHeaderIdx = singles.stream().mapToInt(Integer::intValue).toArray();
+            this.singleHeaderFields = fields.toArray(new String[0]);
+            this.wholeHeaderIndex = whole;
         }
 
         /**
-         * 分发文本帧
+         * 分发文本帧 —— 按形参声明顺序组装入参:
+         * {@code Channel} → {@code @AprHeader} / {@code @AprHeaders} → 原始 String 载荷 / {@code @AprPayload} DTO
          *
-         * @param ch      通道
-         * @param payload 完整帧 JSON
+         * @param ch       通道
+         * @param frameJson 完整帧 JSON
          *
-         * @throws PayloadValidationException 形参校验失败(载荷解析失败 / Bean Validation 不通过)
+         * @throws PayloadValidationException 载荷解析失败 / Bean Validation 不通过
          */
-        void invoke(Channel ch, String payload) throws Exception {
-            Object[] args;
-            if (payloadParam.getType() == String.class) {
-                args = new Object[]{ch, payload};
-            } else {
-                // @AprPayload 路径:从外层信封 {type,sid,...,payload:{...}} 抽出 payload 字段,
-                // 再用 Jackson 反序列化到 dto 类。payload 字段为 null / 缺失,视作 {}。
-                Class<?> dtoType = payloadParam.getType();
-                String inner = extractPayloadJson(payload, jsonMapper);
-                Object dto;
+        void invoke(Channel ch, String frameJson) throws Exception {
+            Map<?, ?> envelope = parseEnvelope(frameJson, jsonMapper);
+            AprFrameHeader header = AprFrameHeader.from(envelope.get("header"));
+
+            String rawJson = null;
+            Object dto = null;
+            if (dtoIndex >= 0) {
+                // @AprPayload 路径:从信封抽出 payload 字段,再用 Jackson 反序列化到 dto 类。
+                // payload 字段为 null / 缺失,视作 {}。
+                Class<?> dtoType = params[dtoIndex].getType();
+                String inner = writePayload(envelope.get("payload"), jsonMapper);
                 try {
                     dto = (inner == null) ? jsonMapper.readValue("{}", dtoType) : jsonMapper.readValue(inner, dtoType);
                 } catch (Exception ex) {
@@ -213,7 +293,28 @@ public abstract class AbstractChannelHandler<C extends Channel> {
                             .collect(Collectors.joining("; "));
                     throw new PayloadValidationException(detail);
                 }
-                args = new Object[]{ch, dto};
+            } else if (rawPayloadIndex >= 0) {
+                rawJson = writePayload(envelope.get("payload"), jsonMapper);
+            }
+
+            Object[] args = new Object[params.length];
+            args[0] = ch;
+            for (int i = 1; i < params.length; i++) {
+                int singleAt = indexOf(singleHeaderIdx, i);
+                if (singleAt >= 0) {
+                    String field = singleHeaderFields[singleAt];
+                    args[i] = (header == null) ? null : switch (field) {
+                        case "type" -> header.type();
+                        case "sessionId" -> header.sessionId();
+                        default -> header.seq();
+                    };
+                } else if (i == wholeHeaderIndex) {
+                    args[i] = header;
+                } else if (i == dtoIndex) {
+                    args[i] = dto;
+                } else {
+                    args[i] = rawJson;
+                }
             }
             try {
                 method.invoke(target, args);
@@ -228,6 +329,16 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         PayloadValidationException(String message) {
             super(message);
         }
+    }
+
+    /// 在下标数组中找形参位置;不存在返回 -1
+    private static int indexOf(int[] idx, int target) {
+        for (int i = 0; i < idx.length; i++) {
+            if (idx[i] == target) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void handleBinary(C channel, ByteBuffer payload) {
@@ -299,7 +410,7 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     // ============ 帧分派 ============
 
     private void handleText(C channel, String payloadJson) {
-        String type = readType(payloadJson);
+        String type = readType(payloadJson, jsonMapper);
         if (type == null) {
             channel.sendError(4400, "JSON 解析失败", false);
             return;
@@ -327,10 +438,10 @@ public abstract class AbstractChannelHandler<C extends Channel> {
         try {
             inv.invoke(channel, payload);
         } catch (PayloadValidationException ex) {
-            log.warn("[{}] 形参校验失败 sid={} type={} : {}", channel(), channel.id(), readType(payload), ex.getMessage());
+            log.warn("[{}] 形参校验失败 sid={} type={} : {}", channel(), channel.id(), readType(payload, jsonMapper), ex.getMessage());
             channel.sendError(4400, ex.getMessage(), false);
         } catch (Exception ex) {
-            log.warn("[{}] 文本帧处理器异常 sid={} type={} : {}", channel(), channel.id(), readType(payload), ex.getMessage());
+            log.warn("[{}] 文本帧处理器异常 sid={} type={} : {}", channel(), channel.id(), readType(payload, jsonMapper), ex.getMessage());
             channel.sendError(4400, "处理失败: " + ex.getMessage(), false);
         }
     }
@@ -349,37 +460,54 @@ public abstract class AbstractChannelHandler<C extends Channel> {
     // Aperture 0.5 起,框架不再解析任何协议头 —— 二进制路由仅取首字节作为 frameType,
     // 业务 controller 自决 magic / flags / seq 等字段布局。
 
-    private String readType(String json) {
+    /**
+     * 解析文本帧信封为顶层 Map;JSON 非法返回空 Map
+     *
+     * @param frameJson  完整帧 JSON
+     * @param jsonMapper Jackson
+     *
+     * @return 信封顶层字段;解析失败返回空 Map
+     */
+    private static Map<?, ?> parseEnvelope(String frameJson, JsonMapper jsonMapper) {
+        if (frameJson == null || frameJson.isBlank()) {
+            return Map.of();
+        }
         try {
-            Map<?, ?> body = jsonMapper.readValue(json, Map.class);
-            Object type = body.get("type");
-            return type == null ? null : type.toString();
+            return jsonMapper.readValue(frameJson, Map.class);
         } catch (Exception ex) {
-            return null;
+            return Map.of();
         }
     }
 
     /**
-     * 从完整帧 JSON 中提取 {@code payload} 字段,转回 JSON 字符串(顺序保持)。
+     * 读 {@code header.type} 作为文本帧路由键
      *
-     * @param frameJson  完整帧 JSON({@code null} 或 blank 视为空帧)
-     * @param jsonMapper Jackson(显式传入以便静态 {@link TextInvocation} 使用)
+     * @param frameJson  完整帧 JSON
+     * @param jsonMapper Jackson
+     *
+     * @return 报文类型;信封非法 / header 缺失 / type 为空返回 null
+     */
+    private static String readType(String frameJson, JsonMapper jsonMapper) {
+        AprFrameHeader header = AprFrameHeader.from(parseEnvelope(frameJson, jsonMapper).get("header"));
+        return header == null ? null : header.type();
+    }
+
+    /**
+     * 把 {@code payload} 字段转回 JSON 字符串(顺序保持)。
+     *
+     * @param payload    payload 段原始值
+     * @param jsonMapper Jackson
      *
      * @return payload 字段的 JSON 字符串;字段为 null / 缺失返回 null(调用方退到 "{}")
      */
-    private static String extractPayloadJson(String frameJson, JsonMapper jsonMapper) {
-        if (frameJson == null || frameJson.isBlank()) {
+    private static String writePayload(Object payload, JsonMapper jsonMapper) {
+        if (payload == null) {
             return null;
         }
         try {
-            Map<?, ?> body = jsonMapper.readValue(frameJson, Map.class);
-            Object inner = body.get("payload");
-            if (inner == null) {
-                return null;
-            }
-            return jsonMapper.writeValueAsString(inner);
+            return jsonMapper.writeValueAsString(payload);
         } catch (Exception ex) {
-            throw new RuntimeException("frame envelope 解析失败: " + ex.getMessage(), ex);
+            throw new RuntimeException("payload 序列化失败: " + ex.getMessage(), ex);
         }
     }
 }

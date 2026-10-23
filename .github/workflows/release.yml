@@ -40,7 +40,9 @@ jobs:
         id: collect
         run: |
           mkdir -p artifacts
-          cp target/*.jar artifacts/
+          # 多模块 reactor:jar 在各子模块 target/ 下,根目录没有产物
+          find . -path ./\*target\* -prune -o -name '*.jar' -print0 \
+            | xargs -0 -I{} cp {} artifacts/
           ls -la artifacts/
 
       - name: 创建 / 更新 Release

@@ -6,7 +6,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -18,11 +17,6 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @Slf4j
 public abstract class AbstractChannel implements Channel {
-
-    /**
-     * 协议版本
-     */
-    private static final int PROTOCOL_VERSION = 1;
 
     /**
      * 会话属性键 — 下行序号计数器
@@ -96,19 +90,15 @@ public abstract class AbstractChannel implements Channel {
 
     @Override
     public void send(String type, Map<String, Object> payload) {
-        Map<String, Object> frame = new LinkedHashMap<>();
-        frame.put("v", PROTOCOL_VERSION);
-        frame.put("type", type);
-        frame.put("sid", session.getId());
-        frame.put("seq", nextSeq());
-        frame.put("ts", System.currentTimeMillis());
-        frame.put("payload", payload);
         try {
-            String json = jsonMapper.writeValueAsString(frame);
             synchronized (session) {
-                if (session.isOpen()) {
-                    session.sendMessage(new TextMessage(json));
+                if (!session.isOpen()) {
+                    return;
                 }
+                // seq 在锁内自增 —— 保证"序号顺序 == 发送顺序"
+                String json = jsonMapper.writeValueAsString(
+                        new AprFrame(new AprFrameHeader(type, session.getId(), nextSeq()), payload));
+                session.sendMessage(new TextMessage(json));
             }
         } catch (Exception ex) {
             log.warn("[{}] 下发失败 sid={} type={} : {}", getClass().getSimpleName(), session.getId(), type, ex.getMessage());
@@ -116,7 +106,8 @@ public abstract class AbstractChannel implements Channel {
     }
 
     /**
-     * 取下行序号并自增
+     * 取下行序号并自增 —— <b>必须在 {@code synchronized (session)} 内调用</b>,
+     * 保证"序号顺序 == 发送顺序"。
      *
      * @return 序号
      */
