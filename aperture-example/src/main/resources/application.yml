@@ -1,0 +1,19 @@
+# Aperture 通道配置 —— 各类能力都是独立插件,可单独开关
+aperture:
+  channel:
+    # 帧大小限制插件
+    frame-limit:
+      enabled: true
+      max-text-bytes: 65536      # 0 = 不限制
+      max-binary-bytes: 1048576  # 0 = 不限制
+    # 服务端主动心跳 —— 服务端发 WebSocket Ping,空闲超timeout 关闭
+    # 与客户端心跳完全独立:客户端不发,这里照发照判
+    server-heartbeat:
+      enabled: true
+      interval-ms: 30000
+      timeout-ms: 90000
+    # 客户端主动心跳 —— 客户端发 heartbeat.ping,服务端回 heartbeat.pong
+    # 默认关闭(需客户端配合);开启后服务端也照样独立工作
+    client-heartbeat:
+      enabled: false
+      timeout-ms: 120000
