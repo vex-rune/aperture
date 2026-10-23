@@ -7,6 +7,8 @@ import java.util.Map;
 /**
  * 通道上下文接口;每条通道一个专用实现(ASR → {@code AsrChannel},Agent → {@code AgentChannel}, Device → {@code DeviceChannel}
  * 等),不在多通道间共享"通用"实现 —— 业务下行方法只属于 各自的专用 channel,不强转、不混入。
+ *
+ * <p>下行提供三种方式:{@link #sendObject} / {@link #sendText} / {@link #sendBinary}。
  */
 public interface Channel {
 
@@ -64,32 +66,32 @@ public interface Channel {
     void close(CloseStatus status);
 
     /**
-     * 下发一帧 JSON
+     * 下发一帧 JSON —— {@code type + "\n" + 载荷序列化后的 JSON}。
      *
-     * @param type    报文类型
-     * @param payload 载荷
+     * <p>载荷可以是任何能被 Jackson 序列化的对象(record / POJO / Map / 列表),不必手工拼 Map。
+     *
+     * @param type    报文类型(首行路由键)
+     * @param payload 载荷对象,序列化为 JSON 跟在首行之后;为 null 时下发 {@code {}}
      */
-    void send(String type, Map<String, Object> payload);
+    void sendObject(String type, Object payload);
 
     /**
-     * 下发 session.ready
+     * 下发一帧文本 —— {@code type + "\n" + text}。
+     *
+     * <p>用于载荷已经是字符串的场景(如纯文本、Base64),省去手动拼 JSON 的引号转义。
+     *
+     * @param type 报文类型(首行路由键)
+     * @param text 载荷文本,<b>不做 JSON 转义</b>
      */
-    void sendReady();
+    void sendText(String type, String text);
 
     /**
-     * 下发 session.reject
+     * 下发一帧二进制 —— 首字节作 {@code frameType},其余字节原样发送。
      *
-     * @param code    错误码
-     * @param message 提示
-     */
-    void sendReject(int code, String message);
-
-    /**
-     * 下发 error
+     * <p>音频 / 文件等大块数据的零开销通道:不走 JSON、不做 Base64。
      *
-     * @param code    错误码
-     * @param message 提示
-     * @param fatal   是否致命
+     * @param frameType 帧类型(0~255),对应业务侧 {@code @AprByteFrame(N)}
+     * @param payload   业务字节,可为 null / 空(此时只发首字节)
      */
-    void sendError(int code, String message, boolean fatal);
+    void sendBinary(int frameType, byte[] payload);
 }

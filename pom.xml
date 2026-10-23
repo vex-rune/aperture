@@ -14,7 +14,7 @@
 
     <groupId>com.vex.aperture</groupId>
     <artifactId>aperture-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Aperture Parent</name>
     <description>

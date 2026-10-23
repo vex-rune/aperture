@@ -18,15 +18,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/// {@link AbstractChannelHandler} 形参校验闭环单测 — 模拟 handleMessage 收到 audio.opening 帧:
+/// {@link AbstractChannelHandler} 形参校验闭环单测 — 模拟收到 {@code audio.opening\n{json}} 帧:
 /// <ol>
 ///   <li>缺 sampleRate → 基类反射前校验失败,业务方法不被调用;</li>
 ///   <li>sampleRate 越界(<8000 或 >48000)→ 同上;</li>
 ///   <li>正常 → 业务方法被调用,形参收到 AudioOpeningRequest record;</li>
-///   <li>payload=null → 走基类的 "{}" 兜底反序列化,然后校验失败。</li>
+///   <li>载荷为空 → 走基类的 "{}" 兜底反序列化,然后校验失败。</li>
 /// </ol>
 class AbstractChannelHandlerAprPayloadTest {
 
@@ -52,10 +53,7 @@ class AbstractChannelHandlerAprPayloadTest {
     static class Recorder {
         boolean called;
         SampleDto received;
-        String headerType;
-        String headerSessionId;
-        Long headerSeq;
-        AprFrameHeader wholeHeader;
+        String rawJson;
         final List<String> sent = new ArrayList<>();
     }
 
@@ -73,13 +71,10 @@ class AbstractChannelHandlerAprPayloadTest {
         }
 
         @Override
-        public void send(String type, java.util.Map<String, Object> payload) {
-            recorder.sent.add(type + ":" + payload.get("message"));
-        }
-
-        @Override
-        public void sendError(int code, String message, boolean fatal) {
-            recorder.sent.add("error:code=" + code + ",msg=" + message);
+        public void sendObject(String type, Object payload) {
+            java.util.Map<?, ?> m = (java.util.Map<?, ?>) payload;
+            Object code = m.get("code");
+            recorder.sent.add(code == null ? type : type + ",code=" + code + ",msg=" + m.get("message"));
         }
     }
 
@@ -98,40 +93,29 @@ class AbstractChannelHandlerAprPayloadTest {
         }
     }
 
-    /** 协议头形参 POJO —— 验证 @AprHeader(单字段) + @AprHeaders(整头) */
-    static class HeaderBean {
+    /** 原始载荷形参 —— 验证拿到的是首行之后的 JSON 原文 */
+    static class RawBean {
         final Recorder recorder;
 
-        HeaderBean(Recorder recorder) {
+        RawBean(Recorder recorder) {
             this.recorder = recorder;
         }
 
-        @AprTextFrame("audio.header")
-        public void onHeader(CapturingChannel ch,
-                             @AprHeader("type") String type,
-                             @AprHeader("sessionId") String sessionId,
-                             @AprHeaders AprFrameHeader whole) {
+        @AprTextFrame("audio.raw")
+        public void onRaw(CapturingChannel ch, String payloadJson) {
             recorder.called = true;
-            recorder.headerType = type;
-            recorder.headerSessionId = sessionId;
-            recorder.wholeHeader = whole;
-        }
-
-        @AprTextFrame("audio.seq")
-        public void onSeq(CapturingChannel ch, @AprHeader("seq") Long seq) {
-            recorder.called = true;
-            recorder.headerSeq = seq;
+            recorder.rawJson = payloadJson;
         }
     }
 
-    /** 真正的处理器壳 — 把 OpeningBean(带 @AprTextFrame 注解)与 recorder 共享给基类 */
+    /** 真正的处理器壳 — 把业务 Bean 与 recorder 共享给基类 */
     static class HandlerWithRecorder extends AbstractChannelHandler<CapturingChannel> {
 
         final Recorder sharedRecorder;
 
         HandlerWithRecorder(Recorder shared) {
             super(HandlerWithRecorder.jsonMapper(), HandlerWithRecorder.validator(),
-                    java.util.List.of(new OpeningBean(shared), new HeaderBean(shared)));
+                    java.util.List.of(new OpeningBean(shared), new RawBean(shared)));
             this.sharedRecorder = shared;
         }
 
@@ -166,8 +150,7 @@ class AbstractChannelHandlerAprPayloadTest {
     void missingField() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.opening\",\"sessionId\":\"s1\",\"seq\":1},\"payload\":{}}";
-        h.handleFrame(session("s1"), new TextMessage(frame));
+        h.handleFrame(session("s1"), new TextMessage("audio.opening\n{}"));
         assertThat(rec.called).as("业务方法不应被调用").isFalse();
         assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("sampleRate"));
     }
@@ -177,8 +160,7 @@ class AbstractChannelHandlerAprPayloadTest {
     void outOfRangeLow() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.opening\",\"sessionId\":\"s2\",\"seq\":1},\"payload\":{\"sampleRate\":4000}}";
-        h.handleFrame(session("s2"), new TextMessage(frame));
+        h.handleFrame(session("s2"), new TextMessage("audio.opening\n{\"sampleRate\":4000}"));
         assertThat(rec.called).isFalse();
         assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("sampleRate"));
     }
@@ -188,8 +170,7 @@ class AbstractChannelHandlerAprPayloadTest {
     void outOfRangeHigh() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.opening\",\"sessionId\":\"s3\",\"seq\":1},\"payload\":{\"sampleRate\":192000}}";
-        h.handleFrame(session("s3"), new TextMessage(frame));
+        h.handleFrame(session("s3"), new TextMessage("audio.opening\n{\"sampleRate\":192000}"));
         assertThat(rec.called).isFalse();
         assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("sampleRate"));
     }
@@ -199,8 +180,7 @@ class AbstractChannelHandlerAprPayloadTest {
     void valid() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.opening\",\"sessionId\":\"s4\",\"seq\":1},\"payload\":{\"sampleRate\":16000,\"codec\":\"pcm_s16le\"}}";
-        h.handleFrame(session("s4"), new TextMessage(frame));
+        h.handleFrame(session("s4"), new TextMessage("audio.opening\n{\"sampleRate\":16000,\"codec\":\"pcm_s16le\"}"));
         assertThat(rec.called).as("业务方法应被调用").isTrue();
         assertThat(rec.received).isNotNull();
         assertThat(rec.received.sampleRate()).isEqualTo(16000);
@@ -209,50 +189,137 @@ class AbstractChannelHandlerAprPayloadTest {
     }
 
     @Test
-    @DisplayName("载荷整体缺失(payload=null)→ 业务方法不被调用,error{4400} 被下发")
-    void nullPayload() {
+    @DisplayName("载荷缺失(只有 type\\n)→ 走 {} 兜底反序列化后校验失败")
+    void emptyPayload() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.opening\",\"sessionId\":\"s5\",\"seq\":1},\"payload\":null}";
-        h.handleFrame(session("s5"), new TextMessage(frame));
+        h.handleFrame(session("s5"), new TextMessage("audio.opening\n"));
         assertThat(rec.called).isFalse();
         assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("sampleRate"));
     }
 
     @Test
-    @DisplayName("@AprHeader 单字段 + @AprHeaders 整头 → 形参拿到 header 全部三项")
-    void headerParams() {
+    @DisplayName("String 形参 → 拿到首行之后的载荷 JSON 原文")
+    void rawPayload() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.header\",\"sessionId\":\"s6\",\"seq\":42},\"payload\":{}}";
-        h.handleFrame(session("s6"), new TextMessage(frame));
+        h.handleFrame(session("s6"), new TextMessage("audio.raw\n{\"a\":1,\"b\":\"x\"}"));
         assertThat(rec.called).as("业务方法应被调用").isTrue();
-        assertThat(rec.headerType).isEqualTo("audio.header");
-        assertThat(rec.headerSessionId).isEqualTo("s6");
-        assertThat(rec.wholeHeader).isNotNull();
-        assertThat(rec.wholeHeader.type()).isEqualTo("audio.header");
-        assertThat(rec.wholeHeader.sessionId()).isEqualTo("s6");
-        assertThat(rec.wholeHeader.seq()).isEqualTo(42L);
+        assertThat(rec.rawJson).isEqualTo("{\"a\":1,\"b\":\"x\"}");
     }
 
     @Test
-    @DisplayName("@AprHeader(\"seq\") → Long 形参拿到上行序号")
-    void headerSeq() {
+    @DisplayName("载荷含换行(格式化 JSON)→ 只切第一个换行,其余全归载荷")
+    void multiLinePayload() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        String frame = "{\"header\":{\"type\":\"audio.seq\",\"sessionId\":\"s7\",\"seq\":7},\"payload\":{}}";
-        h.handleFrame(session("s7"), new TextMessage(frame));
-        assertThat(rec.called).as("业务方法应被调用").isTrue();
-        assertThat(rec.headerSeq).isEqualTo(7L);
+        h.handleFrame(session("s7"), new TextMessage("audio.raw\n{\n  \"a\": 1\n}"));
+        assertThat(rec.called).isTrue();
+        assertThat(rec.rawJson).isEqualTo("{\n  \"a\": 1\n}");
     }
 
     @Test
-    @DisplayName("header 缺失 → 4400;协议头形参收到 null 但路由不中断")
-    void headerMissing() {
+    @DisplayName("缺换行分隔符 → 4400「缺少换行分隔符或报文类型为空」")
+    void missingSeparator() {
         Recorder rec = new Recorder();
         HandlerWithRecorder h = new HandlerWithRecorder(rec);
-        h.handleFrame(session("s8"), new TextMessage("{\"payload\":{}}"));
-        assertThat(rec.called).as("无 header.type 无法路由,不应被调用").isFalse();
-        assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("4400"));
+        h.handleFrame(session("s8"), new TextMessage("{\"sampleRate\":16000}"));
+        assertThat(rec.called).as("无分隔符无法路由,不应被调用").isFalse();
+        assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("缺少换行分隔符"));
+    }
+
+    @Test
+    @DisplayName("首行为空串 → 4400「缺少换行分隔符或报文类型为空」")
+    void typeBlank() {
+        Recorder rec = new Recorder();
+        HandlerWithRecorder h = new HandlerWithRecorder(rec);
+        h.handleFrame(session("s9"), new TextMessage("\n{\"sampleRate\":16000}"));
+        assertThat(rec.called).isFalse();
+        assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("缺少换行分隔符"));
+    }
+
+    @Test
+    @DisplayName("载荷非法 JSON → 4400「载荷解析失败」")
+    void malformedJson() {
+        Recorder rec = new Recorder();
+        HandlerWithRecorder h = new HandlerWithRecorder(rec);
+        h.handleFrame(session("s10"), new TextMessage("audio.opening\n{not-json}"));
+        assertThat(rec.called).isFalse();
+        assertThat(rec.sent).anyMatch(s -> s.startsWith("error") && s.contains("载荷解析失败"));
+    }
+
+    @Test
+    @DisplayName("启动期 —— @AprTextFrame(\"\") 拒启动")
+    void blankFrameTypeRejected() {
+        assertThatThrownBy(() -> new AbstractChannelHandler<CapturingChannel>(jsonMapper, validator,
+                java.util.List.of(new BlankTypeBean())) {
+            @Override
+            protected String channel() {
+                return "ws.blank";
+            }
+
+            @Override
+            protected CapturingChannel newChannel(WebSocketSession session) {
+                return new CapturingChannel(session, new Recorder());
+            }
+        }).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("@AprTextFrame 的 value 不能为空");
+    }
+
+    @Test
+    @DisplayName("启动期 —— 缺载荷形参拒启动")
+    void missingPayloadParamRejected() {
+        assertThatThrownBy(() -> new AbstractChannelHandler<CapturingChannel>(jsonMapper, validator,
+                java.util.List.of(new NoPayloadBean())) {
+            @Override
+            protected String channel() {
+                return "ws.nopayload";
+            }
+
+            @Override
+            protected CapturingChannel newChannel(WebSocketSession session) {
+                return new CapturingChannel(session, new Recorder());
+            }
+        }).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("必须恰有一个载荷形参");
+    }
+
+    @Test
+    @DisplayName("启动期 —— 两个载荷形参拒启动")
+    void twoPayloadParamsRejected() {
+        assertThatThrownBy(() -> new AbstractChannelHandler<CapturingChannel>(jsonMapper, validator,
+                java.util.List.of(new TwoPayloadBean())) {
+            @Override
+            protected String channel() {
+                return "ws.twopayload";
+            }
+
+            @Override
+            protected CapturingChannel newChannel(WebSocketSession session) {
+                return new CapturingChannel(session, new Recorder());
+            }
+        }).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("必须恰有一个载荷形参");
+    }
+
+    /** @AprTextFrame value 为空白 —— 应在启动期被拒 */
+    static class BlankTypeBean {
+        @AprTextFrame("")
+        public void onBlank(CapturingChannel ch, @AprPayload SampleDto req) {
+        }
+    }
+
+    /** 只有 Channel 形参、没有载荷形参 —— 应在启动期被拒 */
+    static class NoPayloadBean {
+        @AprTextFrame("audio.nopayload")
+        public void onNoPayload(CapturingChannel ch) {
+        }
+    }
+
+    /** 同时声明 String 与 @AprPayload 两个载荷形参 —— 应在启动期被拒 */
+    static class TwoPayloadBean {
+        @AprTextFrame("audio.twopayload")
+        public void onTwo(CapturingChannel ch, String raw, @AprPayload SampleDto dto) {
+        }
     }
 }

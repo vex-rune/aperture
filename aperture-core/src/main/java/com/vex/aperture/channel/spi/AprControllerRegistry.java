@@ -3,6 +3,7 @@ package com.vex.aperture.channel.spi;
 import com.vex.aperture.autoconfigure.ApertureControllerConfigurer;
 import com.vex.aperture.channel.AbstractChannelHandler;
 import com.vex.aperture.channel.AprController;
+import com.vex.aperture.channel.plugin.AprPluginScheduler;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.BeanFactory;
@@ -59,13 +60,16 @@ public class AprControllerRegistry implements BeanFactoryAware {
 
     private final ObjectProvider<AbstractChannelHandler<?>> handlers;
     private final ObjectProvider<ApertureControllerConfigurer> configurerProvider;
+    private final AprPluginScheduler scheduler;
     private BeanFactory beanFactory;
 
     public AprControllerRegistry(
             ObjectProvider<AbstractChannelHandler<?>> handlers,
-            ObjectProvider<ApertureControllerConfigurer> configurerProvider) {
+            ObjectProvider<ApertureControllerConfigurer> configurerProvider,
+            AprPluginScheduler scheduler) {
         this.handlers = handlers;
         this.configurerProvider = configurerProvider;
+        this.scheduler = scheduler;
     }
 
     private static String concatPath(String prefix, String value) {
@@ -107,7 +111,7 @@ public class AprControllerRegistry implements BeanFactoryAware {
         indexed.forEach((path, handler) -> {
             AprController ann = handler.getClass().getAnnotation(AprController.class);
             String effectivePath = concatPath(globalPrefix, path);
-            WebSocketHandler wsHandler = new AprWebSocketAdapter(handler);
+            WebSocketHandler wsHandler = new AprWebSocketAdapter(handler, scheduler);
 
             // 1) annotation 自带拦截器
             List<HandshakeInterceptor> interceptorList = new ArrayList<>();

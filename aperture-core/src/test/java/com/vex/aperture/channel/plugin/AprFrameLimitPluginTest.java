@@ -139,23 +139,6 @@ class AprFrameLimitPluginTest {
         assertThat(ch.sent).isEmpty();
     }
 
-    // ============ 上报口径 ============
-
-    @Test
-    @DisplayName("maxTextBytes / maxBinaryBytes —— 关闭时返回 0(表示不限)")
-    void effectiveLimitsForReady() {
-        ApertureChannelProperties props = new ApertureChannelProperties();
-        props.getFrameLimit().setMaxTextBytes(128);
-        props.getFrameLimit().setMaxBinaryBytes(256);
-        AprFrameLimitPlugin on = new AprFrameLimitPlugin(props);
-        assertThat(on.maxTextBytes()).isEqualTo(128);
-        assertThat(on.maxBinaryBytes()).isEqualTo(256);
-
-        props.getFrameLimit().setEnabled(false);
-        assertThat(on.maxTextBytes()).isZero();
-        assertThat(on.maxBinaryBytes()).isZero();
-    }
-
     // ============ 非文本 / 非二进制帧 ============
 
     @Test

@@ -64,7 +64,7 @@ public class AprServerHeartbeatPlugin implements AprChannelPlugin {
     }
 
     /// 收到一帧业务报文 —— 空闲计时由调度器统一维护,这里只清掉"已发过 Ping"标记
-    public void touch(WebSocketSession session) {
+    private void touch(WebSocketSession session) {
         session.getAttributes().put(ATTR_PINGED, Boolean.FALSE);
     }
 

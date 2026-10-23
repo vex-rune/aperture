@@ -4,11 +4,9 @@ import com.vex.aperture.channel.AbstractChannel;
 import com.vex.aperture.channel.AbstractChannelHandler;
 import com.vex.aperture.channel.AprByteFrame;
 import com.vex.aperture.channel.AprController;
-import com.vex.aperture.channel.AprFrameHeader;
-import com.vex.aperture.channel.AprHeader;
-import com.vex.aperture.channel.AprHeaders;
 import com.vex.aperture.channel.AprPayload;
 import com.vex.aperture.channel.AprTextFrame;
+import com.vex.aperture.channel.ApertureChannelProperties;
 import com.vex.aperture.channel.Channel;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -19,8 +17,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * 回声端点 —— 一条 {@code @AprController} 端点演示框架全部能力。
  *
- * <p>文本帧信封:{@code {"header":{"type","sessionId","seq"},"payload":{...}}}。
- * 连接建立后服务端先下发 {@code session.ready},随后按 {@code header.type} 路由。
+ * <p>文本帧格式:{@code type + "\n" + json}(首行为路由键,其余为载荷)。
+ * 连接建立后服务端先下发 {@code session.ready},随后按首行路由。
  */
 @Component
 @AprController("/ws/echo")
@@ -38,8 +36,9 @@ public class EchoController extends AbstractChannelHandler<Channel> {
         }
     }
 
-    public EchoController(JsonMapper jsonMapper, jakarta.validation.Validator validator) {
-        super(jsonMapper, validator, java.util.List.of());
+    public EchoController(JsonMapper jsonMapper, jakarta.validation.Validator validator,
+                         ApertureChannelProperties props) {
+        super(jsonMapper, validator, java.util.List.of(), props);
     }
 
     /// 把本类上的 @AprTextFrame / @AprByteFrame 方法纳入路由表。
@@ -63,27 +62,23 @@ public class EchoController extends AbstractChannelHandler<Channel> {
     /// 文本路由 —— 最简形态:原始载荷 JSON
     @AprTextFrame("echo.raw")
     public void onRaw(Channel c, String payloadJson) {
-        c.send("echo.raw.done", Channel.payload("received", payloadJson));
+        c.sendObject("echo.raw.done", Channel.payload("received", payloadJson));
     }
 
-    /// 文本路由 —— DTO 载荷 + 单个协议头字段 + 整个协议头
+    /// 文本路由 —— DTO 载荷
     @AprTextFrame("echo.dto")
-    public void onDto(Channel c,
-                      @AprPayload EchoRequest req,
-                      @AprHeader("sessionId") String sid,
-                      @AprHeaders AprFrameHeader header) {
+    public void onDto(Channel c, @AprPayload EchoRequest req) {
         int repeat = req.repeat() == null ? 1 : req.repeat();
         String joined = String.valueOf(req.text()).repeat(repeat);
-        c.send("echo.dto.done", Channel.payload(
-                "sid", sid,
-                "seq", header == null ? null : header.seq(),
+        c.sendObject("echo.dto.done", Channel.payload(
+                "sessionId", c.id(),
                 "text", joined));
     }
 
     /// 二进制路由 —— 首字节 frameType 由框架取走,其余原样交付
     @AprByteFrame(0x01)
     public void onBinary(Channel c, com.vex.aperture.channel.BinaryFrame frame) {
-        c.send("echo.binary.done", Channel.payload(
+        c.sendObject("echo.binary.done", Channel.payload(
                 "frameType", frame.frameType(),
                 "bytes", frame.payload().length,
                 "sessionId", c.id()));
@@ -91,6 +86,6 @@ public class EchoController extends AbstractChannelHandler<Channel> {
 
     @Override
     protected void onOpen(Channel c) {
-        c.send("echo.hello", Channel.payload("sessionId", c.id(), "path", "/ws/echo"));
+        c.sendObject("echo.hello", Channel.payload("sessionId", c.id(), "path", "/ws/echo"));
     }
 }

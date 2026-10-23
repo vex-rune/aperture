@@ -83,14 +83,4 @@ public class AprFrameLimitPlugin implements AprChannelPlugin {
             // 连接可能已断,不影响拦截结果
         }
     }
-
-    /// 当前生效的文本帧上限(供 session.ready 上报)
-    public int maxTextBytes() {
-        return enabled() ? props.getFrameLimit().getMaxTextBytes() : 0;
-    }
-
-    /// 当前生效的二进制帧上限(供 session.ready 上报)
-    public int maxBinaryBytes() {
-        return enabled() ? props.getFrameLimit().getMaxBinaryBytes() : 0;
-    }
 }

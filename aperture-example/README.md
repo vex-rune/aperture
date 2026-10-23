@@ -2,7 +2,7 @@
 
 可运行示例 —— 演示 `@AprController` 端点声明与全部路由能力。
 
-**本文所有报文都由 [`EchoControllerTest`](src/test/java/com/vex/aperture/example/EchoControllerTest.java) 逐条断言**，可直接照抄发包验证。
+**本文所有报文都由 [`EchoControllerTest`](src/test/java/com/vex/aperture/example/EchoControllerTest.java)逐条断言**，可直接照抄发包验证。
 
 ## 启动
 
@@ -14,14 +14,18 @@ mvn -pl aperture-example -am spring-boot:run
 
 ## 帧格式
 
-**文本帧**
+**文本帧** —— 首行是路由键，换行之后是载荷 JSON：
 
-```json
-{"header":{"type":"<路由键>","sessionId":"<会话id>","seq":<客户端序号>},"payload":{ }}
+```
+audio.output\n{"sampleRate":16000}
+    ↑ 路由键，对应 @AprTextFrame("audio.output")
+                ↑ 载荷，对应 @AprPayload DTO 或原始 String 形参
 ```
 
-- `header.type` — 路由键，对应 `@AprTextFrame("...")`；下行由服务端回填
-- `payload` — 业务载荷，对应 `@AprPayload` 或原始 `String` 形参
+- 分隔符固定为 `\n`（JSON 规范禁止字符串内出现裸换行，故不会与载荷内容冲突）
+- 路由键必须与 `@AprTextFrame("...")` 的value 完全一致
+- 上行载荷由业务自定，框架不解析任何协议头（无 `header` / `seq` / `v` / `ts`）
+- 需要真实会话 id 请用 `Channel#id()`，而非报文内容
 
 **二进制帧**
 
@@ -34,140 +38,47 @@ mvn -pl aperture-example -am spring-boot:run
 
 `echo.hello` —— `onOpen` 钩子：
 
-```json
-{"header":{"type":"echo.hello","sessionId":"s-test","seq":1},"payload":{"sessionId":"s-test","path":"/ws/echo"}}
+```
+echo.hello
+{"sessionId":"s-test","path":"/ws/echo"}
 ```
 
-`session.ready` — 紧随其后：
+`session.ready` — 紧随其后，报的是**实际生效**的插件能力与边界（被关掉的插件，其能力位与对应段一律不出现）：
 
-```json
-{"header":{"type":"session.ready","sessionId":"s-test","seq":2},"payload":{"serverCaps":["binary_header_v1"],"heartbeat":{"intervalMs":15000,"timeoutMs":45000},"limits":{"maxFrameBytes":4096}}}
+```
+session.ready
+{"serverCaps":["text_frame_v1","binary_first_byte_v1","heartbeat_v1","frame_limit_v1"],"serverHeartbeat":{"intervalMs":30000,"timeoutMs":90000},"limits":{"maxTextFrameBytes":65536,"maxBinaryFrameBytes":1048576}}
 ```
 
-## 上行报文样例
+## 通道插件配置
 
-### 1. `echo.raw` —— 原始载荷直传
+心跳与帧大小上限都是**独立插件**，各自一个配置段，见 [`application.yml`](src/main/resources/application.yml)：
 
-上行：
-
-```json
-{"header":{"type":"echo.raw","sessionId":"s-test","seq":1},"payload":{"text":"hi"}}
-```
-
-下行：
-
-```json
-{"header":{"type":"echo.raw.done","sessionId":"s-test","seq":1},"payload":{"received":"{\"text\":\"hi\"}"}}
-```
-
-> `String` 形参收到的是 `payload` 重新序列化后的 JSON，故在 `received` 里是字符串而非嵌套对象。
-
-### 2. `echo.dto` —— DTO 载荷 + 协议头注入
-
-上行：
-
-```json
-{"header":{"type":"echo.dto","sessionId":"s-test","seq":5},"payload":{"text":"ab","repeat":3}}
-```
-
-下行：
-
-```json
-{"header":{"type":"echo.dto.done","sessionId":"s-test","seq":1},"payload":{"sid":"s-test","seq":5,"text":"ababab"}}
-```
-
-三个形参分别拿到：`@AprHeader("sessionId")` → `s-test`；`@AprHeaders` → 整个头（含上行 `seq=5`）；`@AprPayload` → `text="ab", repeat=3`。
-
-### 3. 校验失败 —— `text` 为空触发 `@NotBlank`
-
-上行：
-
-```json
-{"header":{"type":"echo.dto","sessionId":"s-test","seq":6},"payload":{"text":"","repeat":3}}
-```
-
-下行（业务方法**不执行**）：
-
-```json
-{"header":{"type":"error","sessionId":"s-test","seq":1},"payload":{"code":4400,"message":"text 不能为空","fatal":false}}
-```
-
-### 4. 校验失败 —— `repeat` 越界触发 `@Max(100)`
-
-上行：
-
-```json
-{"header":{"type":"echo.dto","sessionId":"s-test","seq":7},"payload":{"text":"ab","repeat":999}}
-```
-
-下行：
-
-```json
-{"header":{"type":"error","sessionId":"s-test","seq":1},"payload":{"code":4400,"message":"repeat 最大不能超过100","fatal":false}}
-```
-
-### 5. 二进制帧 —— 首字节作 frameType
-
-上行字节：`0x01 0x7F 0x00 0x80`（首字节 `0x01` 命中 `@AprByteFrame(0x01)`，其余 3 字节透传）
-
-下行：
-
-```json
-{"header":{"type":"echo.binary.done","sessionId":"s-test","seq":1},"payload":{"frameType":1,"bytes":3,"sessionId":"s-test"}}
-```
-
-### 6. 未知报文类型 → `4401`
-
-上行：
-
-```json
-{"header":{"type":"echo.not-exist"},"payload":{}}
-```
-
-下行：
-
-```json
-{"header":{"type":"error","sessionId":"s-test","seq":1},"payload":{"code":4401,"message":"未知报文类型 echo.not-exist","fatal":false}}
-```
-
-### 7. `header` 缺失 → `4400`
-
-上行（无 `header` 段，取不到路由键）：
-
-```json
-{"payload":{"text":"hi"}}
-```
-
-下行：
-
-```json
-{"header":{"type":"error","sessionId":"s-test","seq":1},"payload":{"code":4400,"message":"JSON 解析失败","fatal":false}}
-```
-
-## 错误码
-
-| code | 触发条件 |
-|---|---|
-| `4400` | JSON 非法、`header` 缺失、`@AprPayload` 校验失败、业务方法抛异常、二进制 `frameType` 未注册 |
-| `4401` | `header.type` 未注册到任何 `@AprTextFrame` |
-
-## 演示矩阵
-
-| 报文 type | 形参形态 | 演示点 |
+| 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `echo.raw` | `String` | 原始载荷 JSON 直传 |
-| `echo.dto` | `@AprPayload` + `@AprHeader` + `@AprHeaders` | DTO 校验 / 单头字段 / 整个协议头 |
-| binary `0x01` | `BinaryFrame` | 首字节路由 + 剩余字节透传 |
+| `frame-limit.enabled` | `true` | 帧大小限制总开关，关掉后不做任何大小判定 |
+| `frame-limit.max-text-bytes` | `65536` | 文本帧上限；配 `0` 不限制 |
+| `frame-limit.max-binary-bytes` | `1048576` | 二进制帧上限；配 `0` 不限制 |
+| `server-heartbeat.enabled` | `true` | 服务端主动心跳（发 WebSocket Ping） |
+| `server-heartbeat.interval-ms` | `30000` | 空闲达该值发一次 Ping |
+| `server-heartbeat.timeout-ms` | `90000` | 空闲超该值以 `1001` 关闭 |
+| `client-heartbeat.enabled` | `false` | 客户端主动心跳（需客户端发 `heartbeat.ping`） |
+| `client-heartbeat.timeout-ms` | `120000` | 多久没收到客户端心跳就以 `1001` 关闭 |
 
-## 命令行发包
+**两种心跳互相独立**：客户端不发心跳，服务端照样发 Ping、照样判超时。
 
-浏览器控制台（`ws://localhost:8080/ws/echo`）：
+### 客户端心跳报文
 
-```javascript
-const ws = new WebSocket('ws://localhost:8080/ws/echo');
-ws.onmessage = (e) => console.log('↓', JSON.parse(e.data).header.type, e.data);
-ws.onopen = () => ws.send(JSON.stringify({
-  header: { type: 'echo.dto', sessionId: 'my-client', seq: 1 },
-  payload: { text: 'ab', repeat: 3 }
-}));
+```
+客户端 → 服务端   heartbeat.ping\n{}
+服务端 → 客户端   heartbeat.pong\n{}          # 框架内置路由自动回执
+```
+
+### 帧超限
+
+超限回 `error{4409}` 并以 `1009` 关闭连接：
+
+```
+error
+{"code":4409,"message":"文本帧超限: 128 > 32","fatal":true}
 ```
